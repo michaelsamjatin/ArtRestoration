@@ -5,9 +5,35 @@ import numpy as np
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from torchvision import transforms
+from torch.utils.data import random_split
 from model_v2 import UNet
 from data import CrackDataset
 from pytorch_ssim import ssim
+
+def create_and_apply_mask(recon, clean, threshold=0.1):
+    """
+    Creates a mask with black background and white cracks
+    """
+    # Calculate absolute difference
+    diff = torch.abs(recon - clean)
+    
+    # If image has multiple channels, take mean across channels
+    if diff.dim() == 4:
+        diff = diff.mean(dim=1)
+    elif diff.dim() == 3:
+        diff = diff.mean(dim=0)
+    
+    # Create black background
+    result = torch.zeros_like(diff)
+    
+    # Set differences above threshold to white (1)
+    result[diff > threshold] = 1
+    
+    # Scale to 0-255 range
+    result = (result * 255).to(torch.uint8)
+    
+    return result
+
 
 def train_step(model, optimizer, clean_image, cracked_image, crack_mask):
     optimizer.zero_grad()
@@ -15,15 +41,15 @@ def train_step(model, optimizer, clean_image, cracked_image, crack_mask):
     reconstruction = model(cracked_image)
 
     # Combination of SSIM (subtract from 1 to obtain proper loss metric) and MSE loss
-    reconstruction_loss = (1 - ssim(reconstruction, clean_image)) + F.mse_loss(reconstruction, clean_image)
-    
-    total_loss = reconstruction_loss
+    loss_ssim = (1 - ssim(reconstruction, clean_image))
+    mse_loss = F.mse_loss(reconstruction, clean_image)
+    total_loss = loss_ssim + mse_loss
     
     # Backward pass
     total_loss.backward()
     optimizer.step()
     
-    return total_loss, reconstruction
+    return total_loss, reconstruction, loss_ssim, mse_loss
 
 def train_model(model, train_loader, val_loader, num_epochs, device):
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
@@ -42,13 +68,15 @@ def train_model(model, train_loader, val_loader, num_epochs, device):
             crack_masks = crack_masks.to(device)
             
             # Training step
-            loss, reconstruction = train_step(model, optimizer, clean_imgs, cracked_imgs, crack_masks)
+            loss, reconstruction, loss_ssim, mse_loss = train_step(model, optimizer, clean_imgs, cracked_imgs, crack_masks)
             train_losses.append(loss.item())
 
 
             # Log to wandb 
             wandb.log({
                 'train_loss': loss.item(),
+                'ssim_loss': loss_ssim.item(),
+                'mse_loss': mse_loss.item(),
                 'learning_rate': optimizer.param_groups[0]['lr']
             })
             
@@ -59,7 +87,8 @@ def train_model(model, train_loader, val_loader, num_epochs, device):
                     'images/clean': wandb.Image(clean_imgs[0].cpu()),
                     'images/cracked': wandb.Image(cracked_imgs[0].cpu()),
                     'images/reconstruction': wandb.Image(reconstruction[0].cpu()),
-                    'images/crack_mask': wandb.Image(crack_masks[0].cpu())
+                    'images/crack_mask': wandb.Image(crack_masks[0].cpu()),
+                    'images/anomly_mask': wandb.Image(create_and_apply_mask(reconstruction[0].cpu(), clean_imgs[0].cpu()))
                 })
         
         # Validation
@@ -104,13 +133,14 @@ if __name__ == '__main__':
     # Initialize wandb
     wandb.init(
         project="art-restoration",
-        name="CrackDetection_with_attention_v3",
+        name="CrackDetection_with_attention_v4",
     )
 
     # Setup transformation
     transform = transforms.Compose([
         transforms.ToTensor(),
     ])
+
 
     # Create datasets
     train_dataset = CrackDataset(
@@ -120,9 +150,18 @@ if __name__ == '__main__':
         transform=transform
     )
 
+    train_size = int(0.8 * len(train_dataset))
+    val_size = len(train_dataset) - train_size
+
+    train_subset, val_subset = random_split(
+    train_dataset, 
+    [train_size, val_size],
+    generator=torch.Generator().manual_seed(42)  # For reproducibility
+)
+
     # Create dataloaders
-    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True, num_workers=4)
-    val_loader = DataLoader(train_dataset, batch_size=8, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_subset, batch_size=8, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_subset, batch_size=8, shuffle=False, num_workers=4)
 
     # Initialize model and move to device
     # MPS for accelerated training on Apple Silicon, change to cuda if using HLR
