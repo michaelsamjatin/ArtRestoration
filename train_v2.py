@@ -9,6 +9,7 @@ from torch.utils.data import random_split
 from model_v2 import UNet
 from data import CrackDataset
 from pytorch_ssim import ssim
+from torchmetrics.functional import f1_score
 
 def create_and_apply_mask(recon, clean, threshold=0.1):
     """
@@ -35,21 +36,26 @@ def create_and_apply_mask(recon, clean, threshold=0.1):
     return result
 
 
-def train_step(model, optimizer, clean_image, cracked_image, crack_mask):
+def train_step(model, optimizer, clean_image, cracked_image, crack_mask, device):
     optimizer.zero_grad()
     # Forward pass
     reconstruction = model(cracked_image)
+    anomaly_mask = create_and_apply_mask(reconstruction.cpu(), clean_image.cpu())
+
+    anomaly_mask = anomaly_mask.to(device)
 
     # Combination of SSIM (subtract from 1 to obtain proper loss metric) and MSE loss
     loss_ssim = (1 - ssim(reconstruction, clean_image))
     mse_loss = F.mse_loss(reconstruction, clean_image)
+    # f1_loss = 0
+    # f1_loss = f1_score(anomaly_mask / 255, crack_mask.mean(dim=1, keepdim=True).int(), task='binary') # identical dimensions for f1
     total_loss = loss_ssim + mse_loss
     
     # Backward pass
     total_loss.backward()
     optimizer.step()
     
-    return total_loss, reconstruction, loss_ssim, mse_loss
+    return total_loss, reconstruction, anomaly_mask, loss_ssim, mse_loss
 
 def train_model(model, train_loader, val_loader, num_epochs, device):
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
@@ -68,7 +74,7 @@ def train_model(model, train_loader, val_loader, num_epochs, device):
             crack_masks = crack_masks.to(device)
             
             # Training step
-            loss, reconstruction, loss_ssim, mse_loss = train_step(model, optimizer, clean_imgs, cracked_imgs, crack_masks)
+            loss, reconstruction, anomaly_mask, loss_ssim, mse_loss = train_step(model, optimizer, clean_imgs, cracked_imgs, crack_masks, device)
             train_losses.append(loss.item())
 
 
@@ -77,6 +83,7 @@ def train_model(model, train_loader, val_loader, num_epochs, device):
                 'train_loss': loss.item(),
                 'ssim_loss': loss_ssim.item(),
                 'mse_loss': mse_loss.item(),
+                # 'f1_loss': f1_loss.item(),
                 'learning_rate': optimizer.param_groups[0]['lr']
             })
             
@@ -88,7 +95,7 @@ def train_model(model, train_loader, val_loader, num_epochs, device):
                     'images/cracked': wandb.Image(cracked_imgs[0].cpu()),
                     'images/reconstruction': wandb.Image(reconstruction[0].cpu()),
                     'images/crack_mask': wandb.Image(crack_masks[0].cpu()),
-                    'images/anomly_mask': wandb.Image(create_and_apply_mask(reconstruction[0].cpu(), clean_imgs[0].cpu()))
+                    'images/anomly_mask': wandb.Image(anomaly_mask[0].cpu())
                 })
         
         # Validation
