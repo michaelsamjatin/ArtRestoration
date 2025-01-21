@@ -169,4 +169,4 @@ class AttentionUnet(nn.Module):
 
       
       # Final output
-      return self.final_conv(x)  
+      return self.final_conv(x)
