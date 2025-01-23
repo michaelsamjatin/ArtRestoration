@@ -6,8 +6,8 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from torch.utils.data import random_split
-from model_v2 import UNet
-from data import CrackDataset
+from models.model_v2 import UNet
+from utils.data import CrackDataset
 from pytorch_ssim import ssim
 from torchmetrics.functional import f1_score
 
