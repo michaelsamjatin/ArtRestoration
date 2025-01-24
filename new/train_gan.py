@@ -185,12 +185,14 @@ class Solver():
         self.optimizer_G.zero_grad()
     
         # Adversarial loss
+        output_global = self.global_discriminator(reconstruction)
         global_loss = self.adversarial_loss(
-            self.global_discriminator(reconstruction), torch.ones_like(self.global_discriminator(reconstruction))
+            output_global, torch.ones_like(output_global)
         ) if tag in ['global', 'total'] else 0
 
+        output_local = self.local_discriminator(reconstruction)
         local_loss = self.adversarial_loss(
-            self.local_discriminator(reconstruction), torch.ones_like(self.local_discriminator(reconstruction))
+            output_local, torch.ones_like(output_local)
         ) if tag in ['local', 'total'] else 0
         
         # Reconstruction loss 
@@ -218,14 +220,16 @@ class Solver():
         optimizer.zero_grad()
     
         # Real images
+        output_original = discriminator(original)
         real_loss = self.adversarial_loss(
-            discriminator(original), torch.ones_like(discriminator(original))
+            output_original, torch.ones_like(output_original)
         )
         
         # Fake images (detach generator gradients)
         fake_images = reconstruction.detach()
+        output_fake = discriminator(fake_images)
         fake_loss = self.adversarial_loss(
-            discriminator(fake_images), torch.zeros_like(discriminator(fake_images))
+            output_fake, torch.zeros_like(output_fake)
         )
         
         d_loss = (real_loss + fake_loss) / 2
