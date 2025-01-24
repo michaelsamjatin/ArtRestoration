@@ -78,7 +78,7 @@ class InpaintingDataset(Dataset):
         damaged_path = os.path.join(self.damaged_dir, self.damaged_images[idx])
 
         original = Image.open(original_path).convert("RGB")
-        mask = Image.open(mask_path).convert("L")  # Load as grayscale
+        mask = Image.open(mask_path).convert("RGB")
         damaged = Image.open(damaged_path).convert("RGB")
 
         # Apply speficied transformations
