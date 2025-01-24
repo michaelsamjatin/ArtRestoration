@@ -1,0 +1,37 @@
+{
+    "model_name": "GAN_V1",
+    "generator": "UNetGenerator",
+    "epochs": 100,
+    "device": "cuda",
+    "data_root": "/scratch/vihps/vihps20/",
+    "log_root": "/scratch/vihps/vihps20/weights/",
+    "num_workers": 2,
+    "batch_size": 16,
+    "metric": "MeanAbsoluteError",
+    "metric_config": {},
+    "optimizer": "Adam",
+    "optimizer_config_gan": {
+        "lr": 0.0002,
+        "betas": [0.5, 0.999]
+    },
+    "optimizer_config_dg": {
+        "lr": 0.0002,
+        "betas": [0.5, 0.999]
+    },
+    "optimizer_config_dl": {
+        "lr": 0.0002,
+        "betas": [0.5, 0.999]
+    },
+    "adversarial_loss": "BCELoss",
+    "adversarial_config": {},
+    "reconstruction_loss": "L1_SSIM_Loss",
+    "reconstruction_config": {
+        "alpha": 0.7
+    },
+    "loss_weights": {
+        "global": 0.6,
+        "local": 0.2,
+        "recon": 0.2
+    },
+    "loss_step": null
+}
