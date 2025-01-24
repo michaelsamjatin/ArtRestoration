@@ -3,11 +3,11 @@
     "generator": "UNetGenerator",
     "epochs": 100,
     "device": "cuda",
-    "data_root": "",
-    "log_root": "",
+    "data_root": "/scratch/vihps/vihps20/",
+    "log_root": "/scratch/vihps/vihps20/weights/",
     "num_workers": 2,
     "batch_size": 16,
-    "metric": "",
+    "metric": "MeanAbsoluteError",
     "metric_config": {},
     "optimizer": "Adam",
     "optimizer_config_gan": {
@@ -26,7 +26,7 @@
     "adversarial_config": {},
     "reconstruction_loss": "L1_SSIM_Loss",
     "reconstruction_config": {
-        "alpha": 0.7
+        "alpha": 1.0
     },
     "loss_weights": {
         "global": 1,
