@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name=GAN                # create a short name for your job
+#SBATCH --job-name=GANV1              # create a short name for your job
 #SBATCH --output=logs/log-%j.out      # Name of stdout output file (%j expands to jobId)
 #SBATCH --error=logs/log-%j.err       # Name of stderr output file (%j expands to jobId)
 #SBATCH --partition=gpu               # Partition name

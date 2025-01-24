@@ -1,6 +1,5 @@
 import os
 from pathlib import Path
-from datetime import datetime
 import json
 import torch
 from utils.train_gan import run_training

@@ -1,5 +1,6 @@
 
 import os 
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -188,12 +189,12 @@ class Solver():
         output_global = self.global_discriminator(reconstruction)
         global_loss = self.adversarial_loss(
             output_global, torch.ones_like(output_global)
-        ) if tag in ['global', 'total'] else 0
+        ) if tag in ['discriminator', 'global', 'total'] else 0
 
         output_local = self.local_discriminator(reconstruction)
         local_loss = self.adversarial_loss(
             output_local, torch.ones_like(output_local)
-        ) if tag in ['local', 'total'] else 0
+        ) if tag in ['discriminator', 'local', 'total'] else 0
         
         # Reconstruction loss 
         recon_loss = self.reconstruction_loss(
@@ -239,7 +240,7 @@ class Solver():
         return d_loss
 
 
-    def test(self, data_test):
+    def test(self, data_test, with_loss=False):
         """
         Compute the performance of the generator based on provided metric.
 
@@ -263,8 +264,11 @@ class Solver():
             num_workers=self.workers
         )
 
+        # Init list for validation loss
+        val_losses = []
+
         with torch.no_grad():
-            for damaged, mask, original in data_loader:
+            for damaged, _, original in data_loader:
                 # Move data to device
                 damaged = damaged.to(self.device)
                 original = original.to(self.device)
@@ -273,6 +277,10 @@ class Solver():
                 reconstruction = self.generator(damaged)
 
                 self.metric(reconstruction, original)
+
+                # Compute loss
+                if with_loss:
+                    val_losses.append(self.reconstruction_loss(reconstruction, original).item())
 
         # Accumulate metric.
         result = self.metric.compute()
@@ -283,7 +291,10 @@ class Solver():
         # Reset model.
         self.generator.train()
 
-        return result.cpu().item()
+        if with_loss:
+            return result.item(), val_losses.mean()
+        else: 
+            return result.item()
 
 
     def train(self, num_epochs):
@@ -310,12 +321,8 @@ class Solver():
         )
 
         # Keep track of best model
-        best_val_score = 0
+        best_val_loss = float('inf')
         best_model = ''
-
-        # Init dir for checkpoint saving
-        weights_root = self.log_root / 'weights/'
-        weights_root.mkdir(parents=True, exist_ok=True)
 
         # Training Loop
         for epoch in tqdm(range(num_epochs)):
@@ -334,12 +341,10 @@ class Solver():
                 d_loss_global = self.train_step_discriminator(self.optimizer_D_global, self.global_discriminator, reconstruction, original)
                 d_loss_local = self.train_step_discriminator(self.optimizer_D_local, self.local_discriminator, reconstruction, original)
 
-                if self.step and i >= self.step * 0:
+                if self.step and (i % self.step * 3) == 0:
                     tag = 'recon'
-                elif self.step and i >= self.step * 1:
-                    tag = 'global'
-                elif self.step and i >= self.step * 2:
-                    tag = 'local'
+                elif self.step and (i % self.step * 3) == 1:
+                    tag = 'discriminator'
                 else:
                     tag = 'total'
 
@@ -351,7 +356,7 @@ class Solver():
             self.train_score.append(train_score)
 
             # Store validation accuracy.
-            val_score = self.test(self.data_val)
+            val_score, val_loss = self.test(self.data_val, with_loss=True)
             self.val_score.append(val_score)
 
             # Log to wandb 
@@ -361,21 +366,22 @@ class Solver():
                 'g_loss': g_loss.item(),
                 'train_score': train_score,
                 'val_score': val_score,
+                'val_loss': val_loss
             })
 
             # Save checkpoint for best model
-            if val_score > best_val_score:
+            if val_loss < best_val_loss:
                 # Update best validation score and model
-                best_val_score = val_score
+                best_val_loss = val_loss
                 best_model = f"{self.model_name}_{self.epoch}epochs.pth"
                 
                 # Save on server
-                self.save(weights_root / best_model)
+                self.save(self.log_root / best_model)
 
 
         # Log best model to wandb
         artifact = wandb.Artifact('best_model', type='model')
-        artifact.add_file(weights_root / best_model)
+        artifact.add_file(self.log_root / best_model)
         wandb.log_artifact(artifact)
 
 
@@ -386,7 +392,8 @@ def run_training(config):
     wandb.init(
         project="art-restoration",
         name=config['model_name'],
-        config=config
+        config=config,
+        dir=config['log_root']
     )  
 
     # Setup transformation
@@ -398,7 +405,7 @@ def run_training(config):
 
     # Fetch dataset
     data_train, data_val, data_test = get_dataset( 
-        config['data_root'], 
+        Path(config['data_root']), 
         transform, 
         train_ratio=0.7, 
         val_ratio=0.1, 
@@ -428,7 +435,7 @@ def run_training(config):
         data,
         model_name=config['model_name'],
         device=config['device'],
-        log_root=config['log_root'],
+        log_root=Path(config['log_root']),
         num_workers=config['num_workers'],
         batch_size=config['batch_size'],
         metric=config['metric'],
@@ -456,3 +463,5 @@ def run_training(config):
     wandb.log({
         'test_score': test_score
     })
+
+    wandb.finish()
