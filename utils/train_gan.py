@@ -1,6 +1,7 @@
 
 import os 
 from pathlib import Path
+import numpy as np
 
 import torch
 import torch.nn as nn
@@ -296,7 +297,7 @@ class Solver():
         self.generator.train()
 
         if with_loss:
-            return result.item(), val_losses.mean()
+            return result.item(), np.mean(val_losses)
         else: 
             return result.item()
 
