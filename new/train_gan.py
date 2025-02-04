@@ -17,6 +17,9 @@ from models.unet import AttentionUNet
 import utils.losses as losses
 from utils.data import get_dataset
 
+from PIL import Image
+import matplotlib.pyplot as plt
+
 
 class Solver():
 
@@ -239,8 +242,40 @@ class Solver():
         
         return d_loss
 
+    def generate_image(self, original, damaged, restoration, path): 
+    
+        # Convert tensors to numpy arrays for visualization
+        ground_truth_img = original.squeeze(0).cuda().numpy().transpose(1, 2, 0)
+        damaged_img = damaged.squeeze(0).cuda().numpy().transpose(1, 2, 0)
+        restored_img = restoration.squeeze(0).cuda().numpy().transpose(1, 2, 0)
+    
+        # Clip and normalize images to [0, 1] range
+        damaged_img = np.clip((damaged_img + 1) / 2, 0, 1)  # Assuming images are normalized to [-1, 1]
+        ground_truth_img = np.clip((ground_truth_img + 1) / 2, 0, 1)
+        restored_img = np.clip((restored_img + 1) / 2, 0, 1)
+    
+        # Upscale the restored image to the original size (e.g., 512x512)
+        damaged_img_upscaled = np.array(Image.fromarray((damaged_img * 255).astype(np.uint8)).resize((512, 512), Image.BILINEAR)) / 255
+        ground_truth_img_upscaled = np.array(Image.fromarray((ground_truth_img * 255).astype(np.uint8)).resize((512, 512), Image.BILINEAR)) / 255
+        restored_img_upscaled = np.array(Image.fromarray((restored_img * 255).astype(np.uint8)).resize((512, 512), Image.BILINEAR)) / 255
+    
+    
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        images = [ground_truth_img_upscaled, damaged_img_upscaled, restored_img_upscaled]
+        titles = ["Original", "Damaged", "Reconstruction"]
+    
+        for ax, img, title in zip(axes, images, titles):
+            ax.imshow(img, cmap='gray')  # Remove cmap='gray' if the images are in color.
+            ax.set_title(title)
+            ax.axis('off')  # Hide axes for a cleaner look
+    
+        plt.tight_layout()  # Adjust layout to prevent overlap
+    
+        # Save the figure to a desired path.
+        plt.savefig(path, dpi=300)
+        plt.close(fig)
 
-    def test(self, data_test, with_loss=False):
+    def test(self, data_test, with_loss=False, print_sample=False):
         """
         Compute the performance of the generator based on provided metric.
 
@@ -278,6 +313,10 @@ class Solver():
 
                 self.metric(reconstruction, original)
 
+                if print_sample: 
+                    self.generate_image(original, damaged, reconstruction, log_root / f"images/{self.epoch}.png")
+                    print_sample = False
+                
                 # Compute loss
                 if with_loss:
                     val_losses.append(self.reconstruction_loss(reconstruction, original).item())
@@ -356,7 +395,7 @@ class Solver():
             self.train_score.append(train_score)
 
             # Store validation accuracy.
-            val_score, val_loss = self.test(self.data_val, with_loss=True)
+            val_score, val_loss = self.test(self.data_val, with_loss=True, print_sample=(epoch % 10 == 0))
             self.val_score.append(val_score)
 
             # Log to wandb 
@@ -379,7 +418,7 @@ class Solver():
                 self.save(self.log_root / best_model)
 
             # Periodically save checkpoints
-            elif epoch >= 50 and epoch % 10 = 0: 
+            elif epoch >= 50 and epoch % 10 == 0: 
                 # Save on server
                 self.save(self.log_root / f"{self.model_name}_{self.epoch}epochs.pth")
 
