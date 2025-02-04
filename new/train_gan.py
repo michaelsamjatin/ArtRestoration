@@ -378,6 +378,11 @@ class Solver():
                 # Save on server
                 self.save(self.log_root / best_model)
 
+            # Periodically save checkpoints
+            elif epoch >= 50 and epoch % 10 = 0: 
+                # Save on server
+                self.save(self.log_root / f"{self.model_name}_{self.epoch}epochs.pth")
+
 
         # Log best model to wandb
         artifact = wandb.Artifact('best_model', type='model')
@@ -396,9 +401,9 @@ def run_training(config):
         dir=config['log_root']
     )  
 
-    # Setup transformation
+    # Setup transformation ### 
     transform = transforms.Compose([
-        #transforms.Resize((scale, scale)),
+        transforms.Resize((256, 256)),
         transforms.ToTensor(), 
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)) 
     ])
