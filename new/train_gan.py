@@ -470,3 +470,27 @@ def run_training(config):
     })
 
     wandb.finish()
+
+if __name__ == '__main__':
+    import os
+    import sys
+    from pathlib import Path
+    
+    is_cuda = torch.cuda.is_available()
+    print(f"Is CUDA available: {is_cuda}")
+    if is_cuda:
+        print(f"{torch.cuda.current_device()=}\n{torch.cuda.device_count()=}\n{torch.cuda.get_device_name()=}\n")
+
+    parameter_root = Path("parameters")
+
+    param_path = sys.argv[1]
+    task_id = param_path.replace(".param", "")
+    with open(parameter_root / f"{param_path}", "r") as file:
+        params = json.load(file)
+
+    
+    params["device"] = f"cuda:{task_id}"
+    params["model_name"] += f".{task_id}"
+ 
+    print(f"Running params: {params}")
+    run_training(params)
