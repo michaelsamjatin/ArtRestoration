@@ -75,10 +75,9 @@ class InpaintingDataset(Dataset):
         # Apply speficied transformations
         if self.transform:
             original = self.transform(original)
-            mask = self.transform(mask)
             damaged = self.transform(damaged)
 
-        return damaged, mask, original
+        return damaged, original
 
 
 def get_dataset(root: str, transform, train_ratio=0.7, val_ratio=0.1, test_ratio=0.2):

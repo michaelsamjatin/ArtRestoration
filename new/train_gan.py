@@ -1,7 +1,9 @@
 
 import os 
 from pathlib import Path
+import json
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.functional as F
@@ -245,9 +247,9 @@ class Solver():
     def generate_image(self, original, damaged, restoration, path): 
     
         # Convert tensors to numpy arrays for visualization
-        ground_truth_img = original.squeeze(0).cuda().numpy().transpose(1, 2, 0)
-        damaged_img = damaged.squeeze(0).cuda().numpy().transpose(1, 2, 0)
-        restored_img = restoration.squeeze(0).cuda().numpy().transpose(1, 2, 0)
+        ground_truth_img = original[0].cpu().numpy().transpose(1, 2, 0)
+        damaged_img = damaged[0].cpu().numpy().transpose(1, 2, 0)
+        restored_img = restoration[0].cpu().numpy().transpose(1, 2, 0)
     
         # Clip and normalize images to [0, 1] range
         damaged_img = np.clip((damaged_img + 1) / 2, 0, 1)  # Assuming images are normalized to [-1, 1]
@@ -314,7 +316,7 @@ class Solver():
                 self.metric(reconstruction, original)
 
                 if print_sample: 
-                    self.generate_image(original, damaged, reconstruction, log_root / f"images/{self.epoch}.png")
+                    self.generate_image(original, damaged, reconstruction, self.log_root / f"images/{self.epoch}.png")
                     print_sample = False
                 
                 # Compute loss
