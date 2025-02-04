@@ -2,10 +2,10 @@
 
 # activate conda env
 eval "$(conda shell.bash hook)"
-conda activate /scratch/vihps/vihps20/envs/training
+conda activate /home/artproject/.conda/envs/artrestoration
 
 # Set python path
-export PYTHONPATH=/home/vihps/vihps20/gan_dev:$PYTHONPATH
+export PYTHONPATH=/home/artproject:$PYTHONPATH
 
 # debugging flags
 export NCCL_DEBUG=INFO
