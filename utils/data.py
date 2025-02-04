@@ -41,7 +41,6 @@ class InpaintingDataset(Dataset):
         """
         Args:
             original_dir (str): Path to the folder with original paintings.
-            mask_dir (str): Path to the folder with damage masks.
             damaged_dir (str): Path to the folder with damaged paintings.
             transform (callable, optional): Transform to be applied to images.
 
@@ -49,24 +48,18 @@ class InpaintingDataset(Dataset):
             AssertionError: If there is a mismatch in the number of images across folders.
         """
         self.original_dir = original_dir
-        self.mask_dir = mask_dir
         self.damaged_dir = damaged_dir
         self.transform = transform
-
+        
         # Helper function to filter valid image files
-        def valid_image_files(folder):
+        def valid_image_files(folder1, folder2):
             return sorted([
-                file for file in os.listdir(folder)
-                if file.lower().endswith(('.png', '.jpg', '.jpeg'))
+                file for file in os.listdir(folder1)
+                if file.lower().endswith(('.png', '.jpg', '.jpeg')) and os.path.exists(folder2 / file)
             ])
 
-        self.original_images = valid_image_files(original_dir)
-        self.mask_images = valid_image_files(mask_dir)
-        self.damaged_images = valid_image_files(damaged_dir)
-
-        # Ensure all three folders contain the same number of images
-        assert len(self.original_images) == len(self.mask_images) == len(self.damaged_images), \
-            "Mismatch in the number of images across folders."
+        self.original_images = valid_image_files(original_dir, damaged_dir)
+        self.damaged_images = valid_image_files(damaged_dir, original_dir)
 
     def __len__(self):
         return len(self.original_images)
@@ -74,11 +67,9 @@ class InpaintingDataset(Dataset):
     def __getitem__(self, idx):
         # Load images
         original_path = os.path.join(self.original_dir, self.original_images[idx])
-        mask_path = os.path.join(self.mask_dir, self.mask_images[idx])
         damaged_path = os.path.join(self.damaged_dir, self.damaged_images[idx])
 
         original = Image.open(original_path).convert("RGB")
-        mask = Image.open(mask_path).convert("RGB")
         damaged = Image.open(damaged_path).convert("RGB")
 
         # Apply speficied transformations
