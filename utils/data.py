@@ -37,7 +37,7 @@ class InpaintingDataset(Dataset):
     """
     Implements a custom PyTorch dataset to load images and masks used for inpainting.
     """
-    def __init__(self, original_dir, mask_dir, damaged_dir, transform=None):
+    def __init__(self, original_dir, damaged_dir, transform=None):
         """
         Args:
             original_dir (str): Path to the folder with original paintings.
@@ -106,12 +106,11 @@ def get_dataset(root: str, transform, train_ratio=0.7, val_ratio=0.1, test_ratio
     """
 
     # Define paths to data
-    original_dir = root / 'data/initial'
-    mask_dir = root / 'data/crack_mask'
-    damaged_dir = root / 'data/damaged_paintings'
+    original_dir = root / 'initial'
+    damaged_dir = root / 'damaged_paintings'
 
     # Init Inpainting Dataset
-    dataset = InpaintingDataset(original_dir, mask_dir, damaged_dir, transform)
+    dataset = InpaintingDataset(original_dir, damaged_dir, transform)
 
     # Ensure the proportions sum to 1
     assert train_ratio + val_ratio + test_ratio == 1.0, "Ratios must sum to 1."
