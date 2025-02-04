@@ -365,6 +365,9 @@ class Solver():
         best_val_loss = float('inf')
         best_model = ''
 
+        # Init weight root
+        weights_root = Path(self.log_root / 'weights/gan/')
+
         # Training Loop
         for epoch in tqdm(range(num_epochs)):
             self.epoch += 1
@@ -417,17 +420,17 @@ class Solver():
                 best_model = f"{self.model_name}_{self.epoch}epochs.pth"
                 
                 # Save on server
-                self.save(self.log_root / best_model)
+                self.save(weights_root / best_model)
 
             # Periodically save checkpoints
             elif epoch >= 50 and epoch % 10 == 0: 
                 # Save on server
-                self.save(self.log_root / f"{self.model_name}_{self.epoch}epochs.pth")
+                self.save(weights_root / f"{self.model_name}_{self.epoch}epochs.pth")
 
 
         # Log best model to wandb
         artifact = wandb.Artifact('best_model', type='model')
-        artifact.add_file(self.log_root / best_model)
+        artifact.add_file(weights_root / best_model)
         wandb.log_artifact(artifact)
 
 
