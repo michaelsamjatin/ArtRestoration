@@ -268,7 +268,7 @@ class Solver():
         val_losses = []
 
         with torch.no_grad():
-            for damaged, _, original in data_loader:
+            for damaged, original in data_loader:
                 # Move data to device
                 damaged = damaged.to(self.device)
                 original = original.to(self.device)
@@ -328,7 +328,7 @@ class Solver():
         for epoch in tqdm(range(num_epochs)):
             self.epoch += 1
 
-            for i, (damaged, mask, original) in enumerate(train_loader):
+            for i, (damaged, original) in enumerate(train_loader):
 
                 # Move data to device
                 damaged = damaged.to(self.device)
