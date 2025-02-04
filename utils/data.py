@@ -106,8 +106,8 @@ def get_dataset(root: str, transform, train_ratio=0.7, val_ratio=0.1, test_ratio
     """
 
     # Define paths to data
-    original_dir = root / 'initial'
-    damaged_dir = root / 'damaged_paintings'
+    original_dir = root / 'general_damage/initial'
+    damaged_dir = root / 'general_damage/damaged_paintings'
 
     # Init Inpainting Dataset
     dataset = InpaintingDataset(original_dir, damaged_dir, transform)
