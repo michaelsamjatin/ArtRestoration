@@ -1,7 +1,7 @@
 {
-    "model_name": "GAN_V1",
+    "model_name": "GAN_V4",
     "generator": "UNetGenerator",
-    "epochs": 100,
+    "epochs": 150,
     "device": "cuda",
     "data_root": "/home/artproject/data",
     "log_root": "/home/artproject/weights",
