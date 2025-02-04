@@ -484,13 +484,11 @@ if __name__ == '__main__':
     parameter_root = Path("parameters")
 
     param_path = sys.argv[1]
-    task_id = param_path.replace(".param", "")
     with open(parameter_root / f"{param_path}", "r") as file:
         params = json.load(file)
 
     
-    params["device"] = f"cuda:{task_id}"
-    params["model_name"] += f".{task_id}"
+    params["device"] = "cuda"
  
     print(f"Running params: {params}")
     run_training(params)
