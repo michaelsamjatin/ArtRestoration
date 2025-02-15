@@ -1,3 +1,4 @@
 best_model.pth
 wandb/
 __pycache__
+evaluation_images/damaged
