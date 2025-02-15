@@ -1,22 +1,26 @@
 
 import os 
 from pathlib import Path
-import numpy as np
+import json
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.functional as F
 from torch.utils.data import DataLoader
 from torchvision import transforms
 import torchmetrics
+from torchvision.utils import save_image
 
 from tqdm import tqdm
 import wandb
 
 from models.gan import UNetGenerator, Discriminator, PatchGANDiscriminator
-from models.unet import AttentionUNet
 import utils.losses as losses
-from utils.data import get_dataset
+from utils.data import get_dataset_gan
+
+from PIL import Image
+import matplotlib.pyplot as plt
 
 
 class Solver():
@@ -62,6 +66,10 @@ class Solver():
         self.generator = generator.to(self.device)
         self.global_discriminator = Discriminator().to(self.device)
         self.local_discriminator = PatchGANDiscriminator().to(self.device)
+
+        torch.nn.utils.clip_grad_norm_(self.generator.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(self.global_discriminator.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(self.local_discriminator.parameters(), max_norm=1.0)
 
         self.generator.apply(self.weights_init)
         self.global_discriminator.apply(self.weights_init)
@@ -165,7 +173,7 @@ class Solver():
 
         # Load model states.
         self.generator.load_state_dict(checkpoint.pop('generator'))
-        self.global_discriminator.load_state_dict(checkpoint.pop('global_discriminator'))
+        self.global_discriminator.load_state_dict(checkpoint.pop('gobal_discriminator'))
         self.local_discriminator.load_state_dict(checkpoint.pop('local_discriminator'))
 
         # Load optimizer state.
@@ -205,11 +213,8 @@ class Solver():
 
         # Combine losses
         g_loss = global_weight * global_loss + local_weight * local_loss + recon_weight * recon_loss
+        
         g_loss.backward()
-
-        # Apply gradient clipping
-        #torch.nn.utils.clip_grad_norm_(self.generator.parameters(), max_norm=1.0)
-
         self.optimizer_G.step()
         
         return g_loss
@@ -223,7 +228,7 @@ class Solver():
         # Real images
         output_original = discriminator(original)
         real_loss = self.adversarial_loss(
-            output_original, torch.ones_like(output_original)
+            output_original, torch.full_like(output_original, 0.9)  # simple one-sided label smoothing
         )
         
         # Fake images (detach generator gradients)
@@ -235,17 +240,89 @@ class Solver():
         
         d_loss = (real_loss + fake_loss) / 2
         d_loss.backward()
-
-        # Apply gradient clipping
-        torch.nn.utils.clip_grad_norm_(self.global_discriminator.parameters(), max_norm=1.0)
-        torch.nn.utils.clip_grad_norm_(self.local_discriminator.parameters(), max_norm=1.0)
-        
         optimizer.step()
         
         return d_loss
 
+    def generate_image(self, original, damaged, restoration, path): 
+    
+        # Convert tensors to numpy arrays for visualization
+        ground_truth_img = original[0].cpu().numpy().transpose(1, 2, 0)
+        damaged_img = damaged[0].cpu().numpy().transpose(1, 2, 0)
+        restored_img = restoration[0].cpu().numpy().transpose(1, 2, 0)
+    
+        # Clip and normalize images to [0, 1] range
+        damaged_img = np.clip((damaged_img + 1) / 2, 0, 1)  # Assuming images are normalized to [-1, 1]
+        ground_truth_img = np.clip((ground_truth_img + 1) / 2, 0, 1)
+        restored_img = np.clip((restored_img + 1) / 2, 0, 1)
+    
+        # Upscale the restored image to the original size (e.g., 512x512)
+        damaged_img_upscaled = np.array(Image.fromarray((damaged_img * 255).astype(np.uint8)).resize((512, 512), Image.BILINEAR)) / 255
+        ground_truth_img_upscaled = np.array(Image.fromarray((ground_truth_img * 255).astype(np.uint8)).resize((512, 512), Image.BILINEAR)) / 255
+        restored_img_upscaled = np.array(Image.fromarray((restored_img * 255).astype(np.uint8)).resize((512, 512), Image.BILINEAR)) / 255
+    
+    
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        images = [ground_truth_img_upscaled, damaged_img_upscaled, restored_img_upscaled]
+        titles = ["Original", "Damaged", "Reconstruction"]
+    
+        for ax, img, title in zip(axes, images, titles):
+            ax.imshow(img, cmap='gray')  # Remove cmap='gray' if the images are in color.
+            ax.set_title(title)
+            ax.axis('off')  # Hide axes for a cleaner look
+    
+        plt.tight_layout()  # Adjust layout to prevent overlap
+    
+        # Save the figure to a desired path.
+        plt.savefig(path, dpi=300)
+        plt.close(fig)
 
-    def test(self, data_test, with_loss=False):
+
+    def evaluation(self, data_test, save_dir="results"):
+        """Method to save model reconstructions on test data for qualitative analysis"""
+
+        # Prepare for testing
+        self.generator.to(self.device)
+        self.generator.eval()
+
+        # Create base directories for saving images
+        model_name = f"{self.model_name}_{self.epoch}epochs"
+        os.makedirs(f"{save_dir}/{model_name}/original", exist_ok=True)
+        os.makedirs(f"{save_dir}/{model_name}/damaged", exist_ok=True)
+        os.makedirs(f"{save_dir}/{model_name}/reconstructed", exist_ok=True)
+
+        # Create loader for dataset.
+        data_loader = DataLoader(
+            data_test,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.workers
+        )
+
+        # Global index for consistent naming
+        image_index = 0 
+
+        with torch.no_grad():
+            for damaged, original in data_loader:
+                # Move data to device
+                damaged = damaged.to(self.device)
+                original = original.to(self.device)
+
+                # Compute forward pass
+                reconstruction = self.generator(damaged)
+
+                # Save images
+                for i in range(damaged.size(0)):
+                    save_image(original[i], f"{save_dir}/{model_name}/original/{image_index}.jpg")
+                    save_image(damaged[i], f"{save_dir}/{model_name}/damaged/{image_index}.jpg")
+                    save_image(reconstruction[i], f"{save_dir}/{model_name}/reconstructed/{image_index}.jpg")
+                    image_index += 1
+
+        # Reset model
+        self.generator.train()
+
+
+    def test(self, data_test, with_loss=False, print_sample=False):
         """
         Compute the performance of the generator based on provided metric.
 
@@ -273,7 +350,7 @@ class Solver():
         val_losses = []
 
         with torch.no_grad():
-            for damaged, _, original in data_loader:
+            for damaged, original in data_loader:
                 # Move data to device
                 damaged = damaged.to(self.device)
                 original = original.to(self.device)
@@ -283,6 +360,10 @@ class Solver():
 
                 self.metric(reconstruction, original)
 
+                if print_sample: 
+                    self.generate_image(original, damaged, reconstruction, self.log_root / f"images/{self.model_name}_{self.epoch}.png")
+                    print_sample = False
+                
                 # Compute loss
                 if with_loss:
                     val_losses.append(self.reconstruction_loss(reconstruction, original).item())
@@ -329,11 +410,14 @@ class Solver():
         best_val_loss = float('inf')
         best_model = ''
 
+        # Init weight root
+        weights_root = Path(self.log_root / 'weights/gan/')
+
         # Training Loop
         for epoch in tqdm(range(num_epochs)):
             self.epoch += 1
 
-            for i, (damaged, mask, original) in enumerate(train_loader):
+            for i, (damaged, original) in enumerate(train_loader):
 
                 # Move data to device
                 damaged = damaged.to(self.device)
@@ -361,7 +445,7 @@ class Solver():
             self.train_score.append(train_score)
 
             # Store validation accuracy.
-            val_score, val_loss = self.test(self.data_val, with_loss=True)
+            val_score, val_loss = self.test(self.data_val, with_loss=True, print_sample=(epoch % 10 == 0))
             self.val_score.append(val_score)
 
             # Log to wandb 
@@ -381,12 +465,17 @@ class Solver():
                 best_model = f"{self.model_name}_{self.epoch}epochs.pth"
                 
                 # Save on server
-                self.save(self.log_root / best_model)
+                self.save(weights_root / best_model)
+
+            # Periodically save checkpoints
+            elif epoch >= 50 and epoch % 10 == 0: 
+                # Save on server
+                self.save(weights_root / f"{self.model_name}_{self.epoch}epochs.pth")
 
 
         # Log best model to wandb
         artifact = wandb.Artifact('best_model', type='model')
-        artifact.add_file(self.log_root / best_model)
+        artifact.add_file(weights_root / best_model)
         wandb.log_artifact(artifact)
 
 
@@ -401,15 +490,15 @@ def run_training(config):
         dir=config['log_root']
     )  
 
-    # Setup transformation
+    # Setup transformation ### 
     transform = transforms.Compose([
-        #transforms.Resize((scale, scale)),
+        transforms.Resize((256, 256)),
         transforms.ToTensor(), 
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)) 
     ])
 
     # Fetch dataset
-    data_train, data_val, data_test = get_dataset( 
+    data_train, data_val, data_test = get_dataset_gan( 
         Path(config['data_root']), 
         transform, 
         train_ratio=0.7, 
@@ -424,15 +513,7 @@ def run_training(config):
     }
 
     # Init generator
-    # Either regular UNet, AttentionUNet, or UNet with different dilations
-    generator_name = config['generator']
-    if generator_name == 'UNetGenerator':
-        generator = UNetGenerator()
-    elif generator_name == 'AttentionUNet':
-        generator = AttentionUNet(input_channels=3)
-    else:
-        raise ValueError(f"Unsupported generator name: '{generator_name}'. Expected 'UNetGenerator' or 'AttentionUNet'.")
-
+    generator = UNetGenerator()
 
     # Init GAN solver
     solver = Solver(
@@ -470,3 +551,85 @@ def run_training(config):
     })
 
     wandb.finish()
+
+
+def run_testing(config):
+    # Setup transformation 
+    transform = transforms.Compose([
+        transforms.Resize((256, 256)),
+        transforms.ToTensor(), 
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)) 
+    ])
+
+    # Fetch dataset
+    data_train, data_val, data_test = get_dataset_gan( 
+        Path(config['data_root']), 
+        transform, 
+        train_ratio=0.7, 
+        val_ratio=0.1, 
+        test_ratio=0.2
+    )
+
+    # Prepare data for training
+    data = {
+        'train': data_train,
+        'val': data_val
+    }
+
+    # Init generator
+    generator = UNetGenerator()
+
+    # Init GAN solver
+    solver = Solver(
+        generator,
+        data,
+        model_name=config['model_name'],
+        device=config['device'],
+        log_root=Path(config['log_root']),
+        num_workers=config['num_workers'],
+        batch_size=config['batch_size'],
+        metric=config['metric'],
+        metric_config=config['metric_config'],
+        optimizer=config['optimizer'],
+        optimizer_config_gan=config['optimizer_config_gan'],
+        optimizer_config_dg=config['optimizer_config_dg'],
+        optimizer_config_dl=config['optimizer_config_dl'],
+        adversarial_loss=config['adversarial_loss'],
+        adversarial_config=config['adversarial_config'],
+        reconstruction_loss=config['reconstruction_loss'],
+        reconstruction_config=config['reconstruction_config'],
+        loss_weights=config['loss_weights'],
+        loss_step=config['loss_step']
+    )
+
+
+    # Load weights
+    model_path = Path("/home/artproject/weights/gan/GAN_V4.5_145epochs.pth")
+    solver.load(model_path)
+
+    # Testing
+    solver.evaluation(data_test, save_dir=Path("/home/artproject/results"))
+
+
+if __name__ == '__main__':
+    import os
+    import sys
+    from pathlib import Path
+    
+    is_cuda = torch.cuda.is_available()
+    print(f"Is CUDA available: {is_cuda}")
+    if is_cuda:
+        print(f"{torch.cuda.current_device()=}\n{torch.cuda.device_count()=}\n{torch.cuda.get_device_name()=}\n")
+
+    parameter_root = Path("parameters")
+
+    param_path = sys.argv[1]
+    with open(parameter_root / f"{param_path}", "r") as file:
+        params = json.load(file)
+
+    
+    params["device"] = "cuda"
+ 
+    print(f"Running params: {params}")
+    #run_training(params)
+    run_testing(params)
