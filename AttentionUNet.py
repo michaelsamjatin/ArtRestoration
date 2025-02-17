@@ -6,6 +6,9 @@ from modules import DoubleConv, AttentionGate
 class AttentionUnet(nn.Module):
   def __init__(self, in_channels, out_channels, filters=[32, 64, 128, 256]):
       super().__init__()
+
+      # normalize the input
+      self.bn_input = nn.BatchNorm2d(in_channels)
       
       # Encoder pathway
       self.conv1 = DoubleConv(in_channels, filters[0])
@@ -35,6 +38,8 @@ class AttentionUnet(nn.Module):
       self.final_conv = nn.Conv2d(filters[0], out_channels, kernel_size=1)
       
   def forward(self, x):
+      x = self.bn_input(x)
+
       # Encoder
       conv1 = self.conv1(x)
       x = self.pool(conv1)
