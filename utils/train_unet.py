@@ -100,11 +100,16 @@ class Solver():
         optimizer = getattr(torch.optim, kwargs.pop('optimizer'))
         self.optimizer = optimizer(model.parameters(), **kwargs.pop('optimizer_config'))
 
-        # Scheduler. (optional)
-        self.scheduler = kwargs.pop('scheduler')
-        if self.scheduler:
-            scheduler = getattr(torch.optim.lr_scheduler, self.scheduler)
-            self.scheduler = scheduler(self.optimizer, **kwargs.pop('scheduler_config'))
+        # Scheduler. 
+        scheduler = getattr(torch.optim.lr_scheduler, kwargs.pop('scheduler'))
+        self.scheduler = scheduler(self.optimizer, **kwargs.pop('scheduler_config'))
+
+        # Learning Rate Warm-Up.
+        """
+        warmup_config = kwargs.pop('warmup_config')
+        self.max_lr = warmup_config['max_lr']
+        self.warmup_epochs = warmup_config['epochs']
+        """
 
         # Metric.
         metric_name = kwargs.pop('metric')
@@ -161,7 +166,7 @@ class Solver():
         reconstruction = self.model(damaged)
     
         # Compute loss
-        loss = self.loss(reconstruction, original)
+        loss = self.loss(reconstruction, original, mask)
     
         # Compute backward pass
         loss.backward()
@@ -260,7 +265,7 @@ class Solver():
 
                 # Compute loss
                 if with_loss:
-                    val_losses.append(self.loss(reconstructed, original).item())
+                    val_losses.append(self.loss(reconstructed, original, mask).item())
 
         # Qualitative Logging
         if self.epoch % 10 == 0:
@@ -312,9 +317,8 @@ class Solver():
             num_workers=self.workers
         )
 
-        # Init best validation score and best params
+        # Init best validation score
         best_val_loss = 0
-        best_params = None
 
         weights_root = Path(self.log_root / 'weights/unet/')
 
@@ -330,6 +334,17 @@ class Solver():
                 damaged = damaged.to(self.device)
                 original = original.to(self.device)
                 mask = mask.to(self.device)
+
+                # Warm-up phase
+                """
+                if self.epoch <= self.warmup_epochs:
+                    # Calculate warm-up learning rate
+                    lr = self.max_lr * (self.epoch / self.warmup_epochs)
+                    for param_group in self.optimizer.param_groups:
+                        param_group['lr'] = lr
+                else:
+                    self.scheduler.step()
+                """
 
                 # Training Step
                 reconstruction, loss = self.step(damaged, mask, original)
@@ -396,7 +411,7 @@ class Solver():
         wandb.log_artifact(artifact)
 
         # Swap best parameters from training into the model.
-        self.model.load_state_dict(best_params)
+        self.model.load_state_dict(best_model)
 
 
 
@@ -405,14 +420,14 @@ def run_training(config):
     # Initialize wandb
     wandb.init(
         project="crack-restoration",
-        name="FinalUNet",
+        name="UNet_MaskedLoss",
         config=config,
         dir=config['log_root']
     )  
 
     # Setup transformation ### 
     transform = transforms.Compose([
-        #transforms.Resize((512, 512)),
+        transforms.Resize((256, 256)),
         transforms.ToTensor(), 
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)) 
     ])
@@ -526,9 +541,9 @@ def run_testing(config):
 
 
 if __name__ == "__main__":
-    # Define config
+    # Define config 1
     config = {
-        "model_name": 'AttentionUNet',
+        "model_name": 'AttentionUNet1',
         "device": "cuda",
         "batch_size": 16,
         "num_workers": 2,
@@ -539,8 +554,8 @@ if __name__ == "__main__":
         "loss_config": {'alpha': 0.7},
         "scheduler": 'CosineAnnealingLR',
         "scheduler_config": {'T_max': 100, 'eta_min':1e-5},
-        "metric": 'image.StructuralSimilarityIndexMeasure',
-        "metric_config": {'data_range': 1.0},
+        "metric": 'MeanAbsoluteError',
+        "metric_config": {},
         "data_root": "/home/artproject/data",
         "log_root": "/home/artproject",
     }
@@ -548,3 +563,24 @@ if __name__ == "__main__":
     run_training(config)
 
     # run_testing(config)
+
+
+    # Define config 2
+    config = {
+        "model_name": 'AttentionUNet2',
+        "device": "cuda",
+        "batch_size": 16,
+        "num_workers": 2,
+        "epochs": 100,
+        "optimizer": 'AdamW',
+        "optimizer_config": {'lr': 1e-3, 'weight_decay': 3e-4},
+        "loss": 'MultiScaleLoss',
+        "scheduler": 'CosineAnnealingLR',
+        "scheduler_config": {'T_max': 100, 'eta_min':1e-5},
+        "metric": 'MeanAbsoluteError',
+        "metric_config": {},
+        "data_root": "/home/artproject/data",
+        "log_root": "/home/artproject",
+    }
+
+    run_training(config)

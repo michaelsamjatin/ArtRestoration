@@ -12,7 +12,7 @@ class L1_SSIM_Loss(nn.Module):
     Parameters:
         - alpha (float): Weighting factor to balance L1 and SSIM losses.
     """
-    def __init__(self, alpha=0.7, beta=0.7):
+    def __init__(self, alpha=0.7, beta=4.0):
       super(L1_SSIM_Loss, self).__init__()
 
       # Init parameter
@@ -42,7 +42,7 @@ class L1_SSIM_Loss(nn.Module):
         
             # Compute l1 loss between masked areas
             l1_masked = self.l1(recon_masked, original_masked)
-            l1_loss = (1 - self.beta) * l1_masked + self.beta * l1_loss
+            l1_loss = self.beta * l1_masked + 0.8 * l1_loss
         
         # Combine the losses with respective weights
         total_loss = self.alpha * l1_loss + (1 - self.alpha) * ssim_loss
@@ -93,3 +93,68 @@ class TripletLoss(nn.Module):
         total_loss = l1_score + focal_score + dice_score
 
         return total_loss.item()
+
+
+
+
+
+
+
+### Masked Loss Functions ###
+
+def masked_l1(pred, target, mask, weight=4.0):
+    diff = torch.abs(pred - target)
+    weighted_diff = torch.where(mask > 0.5, diff * weight, diff * 0.8)
+    return torch.sum(weighted_diff) / (torch.sum(mask)*weight + torch.sum(1-mask)*0.8)
+
+"""
+def masked_ssim(pred, target, mask, window_size=7):
+    mask = mask.repeat(1,3,1,1)  # RGB channels
+    ux = _gaussian_filter(pred*mask, window_size) 
+    uy = _gaussian_filter(target*mask, window_size)
+    ...  # Full masked SSIM computation
+    return (ssim_map * mask).sum() / mask.sum()
+
+def connectivity_ssim(pred, target, mask):
+    base_ssim = masked_ssim(pred, target, mask)
+    
+    # Sobel gradients
+    grad_x = F.conv2d(pred, sobel_x) 
+    grad_y = F.conv2d(pred, sobel_y)
+    pred_grad = torch.sqrt(grad_x**2 + grad_y**2)
+    
+    target_grad = F.conv2d(target, sobel_x)**2 + F.conv2d(target, sobel_y)**2
+    grad_loss = F.l1_loss(pred_grad, target_grad)
+    
+    return 0.7*base_ssim + 0.3*(1 - grad_loss)
+
+
+class CrackLoss(nn.Module):
+    def __init__(self, alpha=0.5, beta=0.3, gamma=0.2):
+        super().__init__()
+        self.alpha = alpha  # mL1 weight
+        self.beta = beta    # mSSIM weight
+        self.gamma = gamma  # Connectivity weight
+        
+    def forward(self, pred, target, mask):
+        l1 = masked_l1(pred, target, mask)
+        ssim = 1 - masked_ssim(pred, target, mask)
+        connectivity = 1 - connectivity_ssim(pred, target, mask)
+        return self.alpha*l1 + self.beta*ssim + self.gamma*connectivity
+"""
+
+
+class MultiScaleLoss(nn.Module):
+    def __init__(self, scales=[1, 0.5, 0.25], weights=[0.6, 0.3, 0.1]):
+        super().__init__()
+        self.scales = scales
+        self.weights = weights
+    
+    def forward(self, pred, target, mask):
+        loss = 0
+        for scale, weight in zip(self.scales, self.weights):
+            p = F.interpolate(pred, scale_factor=scale)
+            t = F.interpolate(target, scale_factor=scale)
+            m = F.interpolate(mask, scale_factor=scale)
+            loss += weight * masked_l1(p, t, m)
+        return loss
