@@ -72,12 +72,14 @@ class InpaintingDataset(Dataset):
         original = Image.open(original_path).convert("RGB")
         damaged = Image.open(damaged_path).convert("RGB")
 
-        # Apply speficied transformations
+        # Apply speficied transformations^
+        untransformed = damaged 
         if self.transform:
             original = self.transform(original)
             damaged = self.transform(damaged)
 
-        return damaged, original
+
+        return damaged, original, untransformed
 
 
 def get_dataset(root: str, transform, train_ratio=0.7, val_ratio=0.1, test_ratio=0.2):

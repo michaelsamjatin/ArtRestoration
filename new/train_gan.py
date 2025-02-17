@@ -9,15 +9,19 @@ import torch.nn as nn
 import torch.functional as F
 from torch.utils.data import DataLoader
 from torchvision import transforms
+from torchvision.utils import save_image
 import torchmetrics
 
 from tqdm import tqdm
 import wandb
 
 from models.gan import UNetGenerator, Discriminator, PatchGANDiscriminator
-from models.unet import AttentionUNet
+from models.unet import AttentionUNet as EncoderDecoder
+from models.AttentionUNet import AttentionUnet as CrackMaskGenerator
 import utils.losses as losses
 from utils.data import get_dataset
+
+from utils.losses import L1_SSIM_Loss
 
 from PIL import Image
 import matplotlib.pyplot as plt
@@ -53,6 +57,9 @@ class Solver():
         # Step for losses
         self.step = kwargs.pop('loss_step', None) 
 
+        # Add gan loss to encoder decoder loss during train step
+        self.add_g_loss = kwargs.pop('add_g_loss', False) 
+
         # Metric.
         metric_name = kwargs.pop('metric')
         metric_config = kwargs.pop('metric_config', {})
@@ -63,14 +70,26 @@ class Solver():
         self.reconstruction_loss = self.init_loss(kwargs.pop('reconstruction_loss'), kwargs.pop('reconstruction_config')).to(self.device)
 
         # Init models
+        # model_path = "models/Attention_Unet_Aug_l_100eps.pth"
+        model_path = kwargs.pop('crack_mask_model_path', None)
+
+        if model_path: 
+            self.crack_mask_generator = CrackMaskGenerator(in_channels=3, out_channels=1, filters=[32, 64, 128, 256]).to(self.device)
+            self.crack_mask_generator.load_state_dict(torch.load(model_path, map_location=self.device))
+
+            self.crack_mask_generator.eval()
+
+        self.encoder_decoder = EncoderDecoder().to(self.device)
         self.generator = generator.to(self.device)
         self.global_discriminator = Discriminator().to(self.device)
         self.local_discriminator = PatchGANDiscriminator().to(self.device)
 
+        torch.nn.utils.clip_grad_norm_(self.encoder_decoder.parameters(), max_norm=1.0)
         torch.nn.utils.clip_grad_norm_(self.generator.parameters(), max_norm=1.0)
         torch.nn.utils.clip_grad_norm_(self.global_discriminator.parameters(), max_norm=1.0)
         torch.nn.utils.clip_grad_norm_(self.local_discriminator.parameters(), max_norm=1.0)
 
+        self.encoder_decoder.apply(self.weights_init)
         self.generator.apply(self.weights_init)
         self.global_discriminator.apply(self.weights_init)
         self.local_discriminator.apply(self.weights_init)
@@ -78,6 +97,7 @@ class Solver():
 
         # Optimizer.
         optimizer = getattr(torch.optim, kwargs.pop('optimizer'))
+        self.optimizer_ED = optimizer(self.encoder_decoder.parameters(), **kwargs.pop('optimizer_config_gan'))
         self.optimizer_G = optimizer(self.generator.parameters(), **kwargs.pop('optimizer_config_gan'))
         self.optimizer_D_global = optimizer(self.global_discriminator.parameters(), **kwargs.pop('optimizer_config_dg'))
         self.optimizer_D_local = optimizer(self.local_discriminator.parameters(), **kwargs.pop('optimizer_config_dl'))
@@ -142,9 +162,11 @@ class Solver():
 
         # Create checkpoint
         checkpoint = {
+            'encoder_decoder': self.encoder_decoder.state_dict(),
             'generator': self.generator.state_dict(),
             'gobal_discriminator': self.global_discriminator.state_dict(),
             'local_discriminator': self.local_discriminator.state_dict(),
+            'optimizer_ED': self.optimizer_ED.state_dict(),
             'optimizer_G': self.optimizer_G.state_dict(),
             'optimizer_D_global': self.optimizer_D_global.state_dict(),
             'optimizer_D_local': self.optimizer_D_local.state_dict(),
@@ -172,11 +194,13 @@ class Solver():
         checkpoint = torch.load(path, map_location=torch.device(self.device))
 
         # Load model states.
+        self.encoder_decoder.load_state_dict(checkpoint.pop('encoder_decoder'))
         self.generator.load_state_dict(checkpoint.pop('generator'))
         self.global_discriminator.load_state_dict(checkpoint.pop('global_discriminator'))
         self.local_discriminator.load_state_dict(checkpoint.pop('local_discriminator'))
 
         # Load optimizer state.
+        self.optimizer_ED.load_state_dict(checkpoint.pop('optimizer_ED'))
         self.optimizer_G.load_state_dict(checkpoint.pop('optimizer_G'))
         self.optimizer_D_global.load_state_dict(checkpoint.pop('optimizer_D_global'))
         self.optimizer_D_local.load_state_dict(checkpoint.pop('optimizer_D_local'))
@@ -219,6 +243,21 @@ class Solver():
         
         return g_loss
 
+    def train_step_encoder_decoder(self, uncracked, original, g_loss): 
+
+        self.optimizer_ED.zero_grad() 
+
+        encdec_loss = L1_SSIM_Loss(alpha=0.7)
+
+        loss = encdec_loss(uncracked, original)
+
+        if g_loss: 
+            loss = loss + g_loss
+
+        loss.backward() 
+        self.optimizer_ED.step() 
+
+        return loss
 
     def train_step_discriminator(self, optimizer, discriminator, reconstruction, original):
         """Perform training step for discriminator."""
@@ -277,6 +316,66 @@ class Solver():
         plt.savefig(path, dpi=300)
         plt.close(fig)
 
+
+    def evaluation(self, data_test, save_dir="results"):
+        """Method to save model reconstructions on test data for qualitative analysis"""
+
+        # Prepare for testing
+        self.encoder_decoder.to(self.device)
+        self.generator.to(self.device)
+        self.encoder_decoder.eval()
+        self.generator.eval()
+
+        # Create base directories for saving images
+        model_name = f"{self.model_name}_{self.epoch}epochs"
+        os.makedirs(f"{save_dir}/{model_name}/original", exist_ok=True)
+        os.makedirs(f"{save_dir}/{model_name}/damaged", exist_ok=True)
+        os.makedirs(f"{save_dir}/{model_name}/reconstructed", exist_ok=True)
+
+        # Create loader for dataset.
+        data_loader = DataLoader(
+            data_test,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.workers
+        )
+
+        # Global index for consistent naming
+        image_index = 0 
+
+        with torch.no_grad():
+            for damaged, original, full_damaged in data_loader:
+                # Move data to device
+                damaged = damaged.to(self.device)
+                original = original.to(self.device)
+
+                # Encoder Decoder crack fix
+                uncracked = self.encoder_decoder(damaged)
+
+                # crack mask generation
+                if self.crack_mask_generator: 
+                    with torch.no_grad():
+                        preds = self.crack_mask_generator(full_damaged)
+
+                        # convert logits to binary
+                        threshold = 0.5
+                        crack_mask = (F.sigmoid(preds)>threshold).long()
+                        uncracked = torch.cat([uncracked, crack_mask], dim=1)
+
+                # Compute forward pass
+                reconstruction = self.generator(uncracked)
+
+                # Save images
+                for i in range(damaged.size(0)):
+                    save_image(original[i], f"{save_dir}/{model_name}/original/{image_index}.jpg")
+                    save_image(damaged[i], f"{save_dir}/{model_name}/damaged/{image_index}.jpg")
+                    save_image(reconstruction[i], f"{save_dir}/{model_name}/reconstructed/{image_index}.jpg")
+                    image_index += 1
+
+        # Reset model
+        self.generator.train()
+        self.encoder_decoder.train()
+
     def test(self, data_test, with_loss=False, print_sample=False):
         """
         Compute the performance of the generator based on provided metric.
@@ -289,7 +388,9 @@ class Solver():
 
         """
         # Prepare for testing
+        self.encoder_decoder.to(self.device)
         self.generator.to(self.device)
+        self.encoder_decoder.eval()
         self.generator.eval()
         self.metric.reset()
 
@@ -305,13 +406,27 @@ class Solver():
         val_losses = []
 
         with torch.no_grad():
-            for damaged, original in data_loader:
+            for damaged, original, full_damaged  in data_loader:
                 # Move data to device
                 damaged = damaged.to(self.device)
                 original = original.to(self.device)
 
+                # Encoder Decoder crack fix
+                uncracked = self.encoder_decoder(damaged)
+
+                # crack mask generation
+                if self.crack_mask_generator: 
+                    with torch.no_grad():
+                        preds = self.crack_mask_generator(full_damaged)
+
+                        # convert logits to binary
+                        threshold = 0.5
+                        crack_mask = (F.sigmoid(preds)>threshold).long()
+                        uncracked = torch.cat([uncracked, crack_mask], dim=1)
+
+
                 # Compute forward pass.
-                reconstruction = self.generator(damaged)
+                reconstruction = self.generator(uncracked)
 
                 self.metric(reconstruction, original)
 
@@ -330,6 +445,7 @@ class Solver():
         self.metric.reset()
 
         # Reset model.
+        self.encoder_decoder.train()
         self.generator.train()
 
         if with_loss:
@@ -372,14 +488,28 @@ class Solver():
         for epoch in tqdm(range(num_epochs)):
             self.epoch += 1
 
-            for i, (damaged, original) in enumerate(train_loader):
+            for i, (damaged, original, full_damaged) in enumerate(train_loader):
 
                 # Move data to device
                 damaged = damaged.to(self.device)
                 original = original.to(self.device)
 
+
+                # Encoder Decoder crack fix
+                uncracked = self.encoder_decoder(damaged)
+                
+                # crack mask generation
+                if self.crack_mask_generator: 
+                    with torch.no_grad():
+                        preds = self.crack_mask_generator(full_damaged)
+
+                        # convert logits to binary
+                        threshold = 0.5
+                        crack_mask = (F.sigmoid(preds)>threshold).long()
+                        uncracked = torch.cat([uncracked, crack_mask], dim=1)
+
                 # Predict reconstruction
-                reconstruction = self.generator(damaged)
+                reconstruction = self.generator(uncracked)
 
                 # Step
                 d_loss_global = self.train_step_discriminator(self.optimizer_D_global, self.global_discriminator, reconstruction, original)
@@ -393,6 +523,7 @@ class Solver():
                     tag = 'total'
 
                 g_loss = self.train_step_generator(reconstruction, original, tag=tag)
+                encdec_loss = self.train_step_encoder_decoder(uncracked, original, g_loss if self.add_g_loss else None)
 
 
             # Store training accuracy.
@@ -408,6 +539,7 @@ class Solver():
                 'd_loss_global': d_loss_global.item(),
                 'd_loss_local': d_loss_local.mean().item(),
                 'g_loss': g_loss.item(),
+                'encdec_loss': encdec_loss.item(),
                 'train_score': train_score,
                 'val_score': val_score,
                 'val_loss': val_loss
@@ -472,8 +604,8 @@ def run_training(config):
     generator_name = config['generator']
     if generator_name == 'UNetGenerator':
         generator = UNetGenerator()
-    elif generator_name == 'AttentionUNet':
-        generator = AttentionUNet(input_channels=3)
+    # elif generator_name == 'AttentionUNet':
+    #     generator = AttentionUNet(input_channels=3)
     else:
         raise ValueError(f"Unsupported generator name: '{generator_name}'. Expected 'UNetGenerator' or 'AttentionUNet'.")
 
@@ -498,7 +630,8 @@ def run_training(config):
         reconstruction_loss=config['reconstruction_loss'],
         reconstruction_config=config['reconstruction_config'],
         loss_weights=config['loss_weights'],
-        loss_step=config['loss_step']
+        loss_step=config['loss_step'],
+        add_g_loss=config['add_g_loss']
     )
 
 
