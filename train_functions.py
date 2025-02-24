@@ -13,18 +13,20 @@ working_dir = os.getcwd()
 
 
 def segmentation_loss(prediction, truth, weights=[1,1,1], alpha=0.5):
-  '''
+  """
   calculates the training and validation loss for segmentation by summing binary cross entropy, focal loss and dice loss
+
+  Parameters
   -----
-  Parameters:
-  prediction: the models raw predictions (aka logits)
-  truth: the true labels
-  weights: how the three losses are weighted (order: bce, focal, dice)
-  alpha: alpha parameter for the focal loss
+  :prediction: the models raw predictions (aka logits)
+  :truth: the true labels
+  :weights: how the three losses are weighted (order: bce, focal, dice)
+  :alpha: alpha parameter for the focal loss
+
+  Returns
   -----
-  returns:
   the loss
-  '''
+  """
   bce = F.binary_cross_entropy_with_logits(prediction, truth)
   focal = sigmoid_focal_loss(prediction, truth, reduction='mean', alpha=alpha)
   dice_loss = (1-dice(prediction, truth.long()))
@@ -33,6 +35,20 @@ def segmentation_loss(prediction, truth, weights=[1,1,1], alpha=0.5):
 
 
 def train_step(model, optimizer, cracked_image, crack_mask):
+  """
+  performs one training step
+
+  Parameters
+  -----
+  :model: the model that is being trained
+  :optimizer: the optimizer used
+  :cracked_image: the cracked image batch (aka the input)
+  :crack_mask: the respective ground truth masks
+
+  Returns
+  -----
+  total loss in this step and the learnt masks
+  """
   optimizer.zero_grad()
   # forward pass
   learnt_mask = model(cracked_image)
@@ -47,14 +63,45 @@ def train_step(model, optimizer, cracked_image, crack_mask):
 
 
 def balanced_accuracy(pred, targets):
+  """
+  calculates the balanced accuracy between the prediction and targets
+
+  Parameters
+  -----
+  :pred: the models raw prediction (being 0/1 for negative/positive class, not the logits nor probabilities)
+  :targets: the true labels
+
+  Returns
+  -----
+  balanced accuracy between predictions and targets
+  """
   specificity_val = specificity(pred, targets, task="binary")
   recall_val = recall(pred, targets, task="binary")
   return (recall_val + specificity_val)/2
 
 
 def train_model(model, train_loader, val_loader, device, stop_epoch, start_epoch=0, lr=1e-4, plot_dir="data/output", model_name="best_model"):
+  """
+  complete training loop for a model
+
+  Parameters
+  -----
+  :model: the model that should be trained
+  :train_loader: the data loader for the training images
+  :val_loader: the data loader for the validation images (validation is done at completion of each epoch)
+  :device: the device for training
+  :start_epoch: Indicates at which epoch to start. The number of epochs for training is inferred from stop_epoch-start_epoch, start_epoch is mainly used to correctly save intermediate results
+  :stop_epoch: at with epoch to stop the training
+  :lr: wich learning rate to use initially
+  :plot_dir: directory in which to save intermediate generated crack masks
+  :model_name: name for the best model to save to
+
+  Returns
+  -----
+  two lists with training and validation losses per epochs
+  """
   optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
-  scheduler = torch.optim.lr_scheduler(optimizer, step_size=10, gamma=0.7)
+  scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.7)
 
   best_val_loss = float('inf')
   val_loss_per_epoch = []
@@ -80,7 +127,6 @@ def train_model(model, train_loader, val_loader, device, stop_epoch, start_epoch
       loss, learnt_mask = train_step(model, optimizer, cracked_imgs, crack_masks)
       train_losses.append(loss.item())
 
-      ########### convert the logit output to probabilities using the sigmoid function!!!!!!!
       # convert probabilities to 0/1 with a threshold
       threshold = 0.5
       output_binary = (F.sigmoid(learnt_mask)>threshold).long()

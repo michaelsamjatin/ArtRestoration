@@ -12,6 +12,22 @@ def print_model_parameters(m):
 
 
 def save_image(image, prediction, mask, epoch, step, plot_dir):
+  """
+  saves the damaged image, the learnt mask and the ground truth mask together as a single image
+
+  Parameters
+  -----
+  :image: the damaged image
+  :prediction: the predicted mask
+  :mask: ground truth mask
+  :epoch: epoch in which the learnt mask was generated, used for naming the output file
+  :step: in which batch number the mask was generated, used for naming the output file
+  :plot_dir: path to the directory in which image should be saved
+
+  Returns
+  -----
+  Nothing
+  """
   image = image.permute(1,2,0)
   mask = (mask*255).permute(1,2,0)
   prediction = (prediction*255).permute(1,2,0)
@@ -34,6 +50,19 @@ def save_image(image, prediction, mask, epoch, step, plot_dir):
   plt.close()
 
 def save_evaluation(image, prediction, path):
+  """
+  saves the damaged image and the learnt mask together as a single image
+
+  Parameters
+  -----
+  :image: the damaged image
+  :prediction: the predicted mask
+  :path: path (including the desired name for the image) to where the generated image should be saved
+
+  Returns
+  -----
+  Nothing
+  """
   image = image.permute(1,2,0)
   prediction = (prediction*255).permute(1,2,0)
 

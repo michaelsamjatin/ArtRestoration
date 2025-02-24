@@ -5,6 +5,7 @@ import torchvision.transforms.functional as TF
 import random
 
 class InitDataset(Dataset):
+  # dataset class that loads images and masks from their respecitive folders and converts them to tensors
   def __init__(self, img_dir, msk_dir):
     self.img_dir = img_dir
     self.msk_dir = msk_dir
@@ -31,6 +32,7 @@ class InitDataset(Dataset):
   
 
 class CrackDatasetAug(Dataset):
+  # dataset class that gets a dataset (subset) and applies some data augmentation transformation randomly on some of the images
   def __init__(self, subset, apply_transform=False, return_names=False):
     self.subset = subset
     self.apply_transform = apply_transform
@@ -70,6 +72,7 @@ class CrackDatasetAug(Dataset):
     return img, msk
   
 class EvaluationDataset(Dataset):
+  # dataset class mainly used for evaluation on the real damage images
   def __init__(self, img_dir, return_names=True):
     self.img_dir = img_dir
     self.return_names = return_names
